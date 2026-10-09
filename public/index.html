@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="pt"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Zone5Training</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+<script src="config.js"></script>
+<style>
+:root{box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);--bg:#f4f5f7;--cd:#fff;--tx:#14171c;--mu:#6b7380;--ac:#e8501c;--bd:#e1e4e9}
+:root:not([data-theme="light"]){}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0f1115;--cd:#1a1d24;--tx:#eef0f3;--mu:#95a0ae;--bd:#2b303a}}
+:root[data-theme="dark"]{--bg:#0f1115;--cd:#1a1d24;--tx:#eef0f3;--mu:#95a0ae;--bd:#2b303a}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--tx);font:15px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+#app{max-width:760px;margin:0 auto;padding:12px}
+h1{font-size:22px;margin:0}h1 b{color:var(--ac)}h3{margin:0 0 8px;font-size:16px}
+.card{background:var(--cd);border:1px solid var(--bd);border-radius:12px;padding:12px;margin:10px 0}
+.m{color:var(--mu);font-size:13px}.row{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+input,select,textarea,button{font:inherit;color:var(--tx);background:var(--bg);border:1px solid var(--bd);border-radius:8px;padding:7px 9px;max-width:100%}
+input{min-width:0}input.s{width:72px}input.w{flex:1;min-width:110px}textarea{width:100%}
+button{cursor:pointer;background:var(--ac);color:#fff;border:0;font-weight:600}button.g{background:var(--bg);color:var(--tx);border:1px solid var(--bd)}button.x{background:none;color:var(--mu);padding:2px 6px}
+.tabs{display:flex;gap:4px;overflow-x:auto;padding:6px 0;position:sticky;top:env(safe-area-inset-top,0px);background:var(--bg);z-index:5}
+.tabs button{background:var(--cd);color:var(--tx);border:1px solid var(--bd);white-space:nowrap}.tabs button.on{background:var(--ac);color:#fff;border-color:var(--ac)}
+table{width:100%;border-collapse:collapse;font-size:13px}td,th{padding:5px 4px;border-bottom:1px solid var(--bd);text-align:left}
+.wrap{overflow-x:auto}.ph{display:flex;gap:6px;margin-top:6px}.ph img{width:31%;border-radius:8px}
+svg{width:100%;height:auto}.err{color:#d33;font-size:13px}
+</style></head><body><div id="app"><p class="m">A carregar…</p></div>
+<script>
+const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const iso=d=>{d=d||new Date();return new Date(d.getTime()-d.getTimezoneOffset()*6e4).toISOString().slice(0,10)};
+const DAYS=['Domingo','Segunda','Terça','Quarta','Quinta','Sexta','Sábado'];
+const MEALS=['Pequeno-almoço','Lanche da manhã','Almoço','Lanche da tarde','Jantar','Ceia'];
+const wd=s=>new Date(s+'T12:00').getDay();
+const wk=s=>{const d=new Date(s+'T12:00');d.setDate(d.getDate()-((d.getDay()+6)%7));return iso(d)};
+const num=v=>parseFloat(String(v).replace(',','.'))||0;
+const r1=v=>Math.round(v*10)/10;
+let me,cur,D,view='login',tab='treino',date=iso(),draft=null,pw={},clients=[],info={},err='';
+const defD=()=>({plans:{},sessions:[],weights:[],habits:[],hlog:{},meals:{},supps:[],slog:{}});
+const app=()=>document.getElementById('app');
+const sb=supabase.createClient(CFG.url,CFG.key);
+const EM=u=>u+'@zone5.example.com';
+const uid=s=>String(s).trim().toLowerCase().replace(/[^a-z0-9_.-]/g,'');
+const save=async()=>{const{error}=await sb.from('user_data').upsert({user_id:cur,data:D,updated_at:new Date().toISOString()});if(error)err='Erro ao guardar: '+error.message};
+const mut=async f=>{f();await save();render()};
+async function fn(name,body){const{data:{session}}=await sb.auth.getSession();const r=await fetch('/.netlify/functions/'+name,{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+session.access_token},body:JSON.stringify(body)});const j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(j.error||('Erro '+r.status));return j}
+async function login(){const u=uid($('#lu').value),p=$('#lp').value;const{error}=await sb.auth.signInWithPassword({email:EM(u),password:p});if(error){err='Credenciais inválidas';return render()}err='';await boot()}
+async function boot(){try{const{data:{session}}=await sb.auth.getSession();if(!session){view='login';return render()}const{data:a,error}=await sb.from('profiles').select('*').eq('id',session.user.id).maybeSingle();if(error||!a){err='Conta sem perfil. Contacta o administrador.';await sb.auth.signOut();view='login';return render()}me=a;await enter()}catch(e){err='Erro: '+e.message;view='login';render()}}
+async function reg(){if($('#rh').value)return;const u=uid($('#ru').value),p=$('#rp').value;if(u.length<3){err='Username com pelo menos 3 caracteres';return render()}if(p.length<8||p!==$('#rq').value){err='As passwords têm de coincidir e ter pelo menos 8 caracteres';return render()}
+ try{const r=await fetch('/.netlify/functions/register',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:u,password:p,name:$('#rn').value})});const j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(j.error||('Erro '+r.status));const{error}=await sb.auth.signInWithPassword({email:EM(u),password:p});if(error)throw error;err='';await boot()}catch(e){err=e.message;render()}}
+async function enter(){if(me.role==='admin'){view='admin';await loadAdmin()}else await openC(me.id);render()}
+async function openC(u){cur=u;const{data}=await sb.from('user_data').select('data').eq('user_id',u).maybeSingle();D=Object.assign(defD(),data?.data||{});view='app';tab='treino';date=iso();draft=null;pw={};startDraft()}
+async function loadAdmin(){const{data}=await sb.from('profiles').select('*').eq('role','client').order('name');clients=data||[];const{data:ud}=await sb.from('user_data').select('user_id,data');info={};clients.forEach(c=>{const d=(ud||[]).find(x=>x.user_id===c.id)?.data||{};const w=(d.weights||[]).slice(-1)[0];info[c.id]={n:(d.sessions||[]).length,w:w?w.kg:'-',l:(d.sessions||[]).slice(-1)[0]?.d||'-'}})}
+async function logout(){await sb.auth.signOut();me=cur=D=null;view='login';render()}
+async function addClient(){const u=uid($('#nu').value),p=$('#np').value;if(!u||p.length<6){err='Username e password (mín. 6 caracteres)';return render()}try{await fn('admin',{action:'create',username:u,password:p,name:$('#nn').value||u});err='';await loadAdmin()}catch(e){err=e.message}render()}
+async function saveAssoc(u){const a=clients.find(c=>c.id===u);a.pt=$('#pt_'+u).value;a.gym=$('#gy_'+u).value;const{error}=await sb.from('profiles').update({pt:a.pt,gym:a.gym}).eq('id',u);alert(error?error.message:'Guardado')}
+async function delClient(u){if(!confirm('Remover este cliente e todos os seus dados?'))return;try{await fn('admin',{action:'delete',id:u});await loadAdmin();err=''}catch(e){err=e.message}render()}
+async function resetPw(u){const p=prompt('Nova password (mín. 6 caracteres):');if(!p||p.length<6)return;try{await fn('admin',{action:'password',id:u,password:p});alert('Password alterada')}catch(e){alert(e.message)}}
+
+function startDraft(){const p=D.plans[wd(date)];draft={d:date,plan:p?.name||'',ex:(p?.exs||[]).map(n=>({n,s:[['','']]})),dur:'',rpe:7}}
+function setDate(v){date=v||iso();startDraft();render()}
+function savePlan(){const ex=$('#pe').value.split('\n').map(s=>s.trim()).filter(Boolean);mut(()=>{D.plans[wd(date)]={name:$('#pn').value,exs:ex};startDraft()})}
+function addSet(i){draft.ex[i].s.push(['','']);render()}
+function addEx(){const n=$('#xn').value.trim();if(n){draft.ex.push({n,s:[['','']]});render()}}
+function saveSess(){const ex=draft.ex.map(e=>({n:e.n,s:e.s.filter(s=>num(s[1])>0).map(s=>[num(s[0]),num(s[1])])})).filter(e=>e.s.length);if(!ex.length&&!num(draft.dur)){err='Regista pelo menos uma série ou a duração';return render()}err='';
+ const vol=ex.reduce((a,e)=>a+e.s.reduce((b,s)=>b+s[0]*s[1],0),0);mut(()=>{D.sessions.push({d:date,plan:draft.plan,dur:num(draft.dur),rpe:draft.rpe,ex,vol,load:num(draft.dur)*draft.rpe});startDraft()})}
+const delSess=i=>mut(()=>D.sessions.splice(i,1));
+const tab$=t=>{tab=t;render()};
+const $=s=>document.querySelector(s);
+
+function tTreino(){const p=D.plans[wd(date)]||{};
+ let h=`<div class=card><div class=row><b>Dia:</b><input type=date value="${date}" onchange="setDate(this.value)"><span class=m>${DAYS[wd(date)]}</span></div>
+ <details ${p.name?'':'open'}><summary class=m>Plano de ${DAYS[wd(date)]}${p.name?': '+esc(p.name):' (por definir)'}</summary>
+ <input id=pn class=w placeholder="Nome (ex.: Peito + Tríceps)" value="${esc(p.name)}" style="width:100%;margin:6px 0"><textarea id=pe rows=5 placeholder="Um exercício por linha">${esc((p.exs||[]).join('\n'))}</textarea><button onclick="savePlan()">Guardar plano do dia</button></details></div>`;
+ h+=`<div class=card><h3>Sessão — ${esc(draft.plan||'sem plano')}</h3>`;
+ draft.ex.forEach((e,i)=>{h+=`<div style="margin:8px 0"><b>${esc(e.n)}</b>`+e.s.map((s,j)=>`<div class=row style="margin-top:4px"><span class=m>S${j+1}</span><input class=s inputmode=decimal placeholder=kg value="${esc(s[0])}" onchange="draft.ex[${i}].s[${j}][0]=this.value"><input class=s inputmode=numeric placeholder=reps value="${esc(s[1])}" onchange="draft.ex[${i}].s[${j}][1]=this.value"></div>`).join('')+`<button class=g style="margin-top:4px" onclick="addSet(${i})">+ série</button></div>`});
+ h+=`<div class=row><input id=xn class=w placeholder="Adicionar exercício"><button class=g onclick="addEx()">+</button></div><hr style="border:0;border-top:1px solid var(--bd)">
+ <div class=row><label>Duração (min) <input class=s inputmode=numeric value="${esc(draft.dur)}" onchange="draft.dur=this.value"></label>
+ <label>RPE <b id=rv>${draft.rpe}</b>/10 <input type=range min=1 max=10 value=${draft.rpe} oninput="draft.rpe=+this.value;$('#rv').textContent=this.value"></label></div>
+ <p class=m>Volume = Σ kg×reps. Carga da sessão = duração × RPE (calculados automaticamente).</p><button onclick="saveSess()">Guardar sessão</button></div>`;
+ const W={};D.sessions.forEach(s=>{const k=wk(s.d);const w=W[k]||(W[k]={n:0,v:0,l:0,r:0,m:0});w.n++;w.v+=s.vol;w.l+=s.load;w.r+=s.rpe;w.m+=s.dur});
+ h+=`<div class=card><h3>Resumo semanal</h3><div class=wrap><table><tr><th>Semana</th><th>Sessões</th><th>Volume kg</th><th>Min</th><th>RPE méd.</th><th>Carga</th></tr>`+Object.keys(W).sort().reverse().slice(0,8).map(k=>{const w=W[k];return`<tr><td>${k.slice(5)}</td><td>${w.n}</td><td>${Math.round(w.v)}</td><td>${w.m}</td><td>${r1(w.r/w.n)}</td><td>${Math.round(w.l)}</td></tr>`}).join('')+`</table></div></div>`;
+ h+=`<div class=card><h3>Sessões</h3>`+(D.sessions.map((s,i)=>[s,i]).reverse().slice(0,15).map(([s,i])=>`<div class=row style="justify-content:space-between;border-bottom:1px solid var(--bd);padding:4px 0"><span>${s.d} · ${esc(s.plan||'—')} · ${s.dur}min · RPE ${s.rpe} · ${Math.round(s.vol)}kg</span><button class=x onclick="delSess(${i})">✕</button></div>`).join('')||'<p class=m>Sem sessões.</p>')+`</div>`;return h}
+
+const dm=()=>D.meals[date]||(D.meals[date]={});
+const tot=a=>a.reduce((t,x)=>({k:t.k+x.kcal,p:t.p+x.p,c:t.c+x.c,f:t.f+x.f}),{k:0,p:0,c:0,f:0});
+function addFood(m){const g=num($('#fg'+m).value),n=$('#fn'+m).value.trim();if(!n||!g){err='Nome e gramas são obrigatórios';return render()}err='';const f=g/100,v=k=>num($('#f'+k+m).value)*f;
+ mut(()=>{(dm()[m]=dm()[m]||[]).push({n,g,kcal:v('k'),p:v('p'),c:v('c'),f:v('f')})})}
+const delFood=(m,i)=>mut(()=>dm()[m].splice(i,1));
+async function photoFood(m,inp){const f=inp.files[0];if(!f)return;const b=$('#pb'+m);b.textContent='A analisar…';
+ try{const img=await comp(f);const r=await fn('analyze-food',{image:img.split(',')[1]});const it=(r.items||[]).filter(x=>x&&x.n);if(!it.length)throw new Error('Nada detetado');
+ await mut(()=>{(dm()[m]=dm()[m]||[]).push(...it.map(x=>({n:x.n,g:num(x.g),kcal:num(x.kcal),p:num(x.p),c:num(x.c),f:num(x.f)})))});err='Valores estimados por IA — confirma as gramagens.';render()}catch(e){err='Foto: '+e.message;render()}}
+function tRef(){const d=dm();const all=MEALS.flatMap((_,i)=>d[i]||[]),T=tot(all);
+ let h=`<div class=card><div class=row><input type=date value="${date}" onchange="date=this.value||iso();render()"><b>${Math.round(T.k)} kcal</b><span class=m>P ${r1(T.p)} · H ${r1(T.c)} · G ${r1(T.f)} g</span></div></div>`;
+ MEALS.forEach((n,m)=>{const a=d[m]||[],t=tot(a);h+=`<div class=card><div class=row style="justify-content:space-between"><h3>${n}</h3><span class=m>${Math.round(t.k)} kcal</span></div>`+a.map((x,i)=>`<div class=row style="justify-content:space-between;border-bottom:1px solid var(--bd);padding:3px 0"><span>${esc(x.n)} · ${r1(x.g)}g <span class=m>${Math.round(x.kcal)}kcal P${r1(x.p)} H${r1(x.c)} G${r1(x.f)}</span></span><button class=x onclick="delFood(${m},${i})">✕</button></div>`).join('')+
+ `<div class=row style="margin-top:6px"><input id=fn${m} class=w placeholder=Alimento><input id=fg${m} class=s inputmode=decimal placeholder="g"></div><div class=row style="margin-top:4px"><span class=m>por 100g:</span><input id=fk${m} class=s placeholder=kcal><input id=fp${m} class=s placeholder=P><input id=fc${m} class=s placeholder=H><input id=ff${m} class=s placeholder=G><button onclick="addFood(${m})">Adicionar</button></div>
+ <div style="margin-top:6px"><label><span class="g" style="display:inline-block;padding:7px 9px;border:1px solid var(--bd);border-radius:8px;cursor:pointer" id=pb${m}>📷 Foto do prato/produtos</span><input type=file accept="image/*" hidden onchange="photoFood(${m},this)"></label></div></div>`});return h}
+
+function tHab(){const days=[...Array(7)].map((_,i)=>{const d=new Date(date+'T12:00');d.setDate(d.getDate()-6+i);return iso(d)});
+ return`<div class=card><div class=row><input type=date value="${date}" onchange="date=this.value||iso();render()"><input id=hn class=w placeholder="Novo hábito (ex.: 2L água)"><button onclick="addH()">+</button></div></div><div class="card wrap"><table><tr><th></th>${days.map(d=>`<th>${d.slice(8)}</th>`).join('')}<th></th></tr>`+D.habits.map((h,i)=>`<tr><td>${esc(h)}</td>${days.map(d=>`<td><input type=checkbox ${(D.hlog[d]||[]).includes(h)?'checked':''} onchange="togH('${d}',${i})"></td>`).join('')}<td><button class=x onclick="delH(${i})">✕</button></td></tr>`).join('')+`</table>${D.habits.length?'':'<p class=m>Sem hábitos.</p>'}</div>`}
+const addH=()=>{const v=$('#hn').value.trim();v&&mut(()=>D.habits.push(v))};
+const delH=i=>mut(()=>D.habits.splice(i,1));
+const togH=(d,i)=>mut(()=>{const a=D.hlog[d]||(D.hlog[d]=[]),h=D.habits[i],k=a.indexOf(h);k<0?a.push(h):a.splice(k,1)});
+
+const comp=f=>new Promise(r=>{const i=new Image;i.onload=()=>{const k=Math.min(1,600/Math.max(i.width,i.height)),c=document.createElement('canvas');c.width=i.width*k;c.height=i.height*k;c.getContext('2d').drawImage(i,0,0,c.width,c.height);r(c.toDataURL('image/jpeg',.6))};i.src=URL.createObjectURL(f)});
+async function pickPh(k,inp){if(inp.files[0]){pw[k]=await comp(inp.files[0]);$('#pl'+k).textContent='✓ '+({f:'Frontal',l:'Lateral',p:'Posterior'})[k]}}
+async function saveW(){const kg=num($('#wk').value),d=$('#wd').value||iso();if(!kg){err='Indica o peso';return render()}err='';
+ for(const k in pw){const blob=await(await fetch(pw[k])).blob();const{error}=await sb.storage.from('photos').upload(`${cur}/${d}_${k}.jpg`,blob,{upsert:true,contentType:'image/jpeg'});if(error)err='Fotos: '+error.message}
+ pw={};await mut(()=>{D.weights=D.weights.filter(w=>w.d!==d);D.weights.push({d,kg});D.weights.sort((a,b)=>a.d<b.d?-1:1)})}
+async function showPh(d){const el=$('#ph'+d);el.innerHTML='';for(const k of['f','l','p']){const{data}=await sb.storage.from('photos').createSignedUrl(`${cur}/${d}_${k}.jpg`,3600);if(data?.signedUrl)el.innerHTML+=`<img src="${data.signedUrl}">`}if(!el.innerHTML)el.innerHTML='<span class=m>Sem fotos.</span>'}
+const delW=d=>mut(()=>D.weights=D.weights.filter(w=>w.d!==d));
+function tPeso(){const bt=(k,t)=>`<label><span id=pl${k} class=g style="display:inline-block;padding:7px 9px;border:1px solid var(--bd);border-radius:8px;cursor:pointer">📷 ${t}</span><input type=file accept="image/*" hidden onchange="pickPh('${k}',this)"></label>`;
+ return`<div class=card><h3>Pesagem mensal</h3><div class=row><input id=wd type=date value="${iso()}"><input id=wk class=s inputmode=decimal placeholder=kg></div><div class=row style="margin:8px 0">${bt('f','Frontal')}${bt('l','Lateral')}${bt('p','Posterior')}</div><button onclick="saveW()">Guardar pesagem</button></div>
+ <div class=card><h3>Histórico</h3>`+([...D.weights].reverse().map(w=>`<div style="border-bottom:1px solid var(--bd);padding:4px 0"><div class=row style="justify-content:space-between"><span>${w.d} · <b>${w.kg} kg</b></span><span><button class=g onclick="showPh('${w.d}')">Fotos</button><button class=x onclick="delW('${w.d}')">✕</button></span></div><div class=ph id="ph${w.d}"></div></div>`).join('')||'<p class=m>Sem registos.</p>')+`</div>`}
+
+function tSup(){return`<div class=card><div class=row><input type=date value="${date}" onchange="date=this.value||iso();render()"></div><div class=row style="margin-top:6px"><input id=sn class=w placeholder="Suplemento"><input id=sd class=s placeholder="dose"><input id=st type=time><button onclick="addS()">+</button></div></div><div class=card>`+
+ ([...D.supps].sort((a,b)=>(a.t||'')<(b.t||'')?-1:1).map(s=>{const i=D.supps.indexOf(s);return`<div class=row style="justify-content:space-between;padding:4px 0;border-bottom:1px solid var(--bd)"><label><input type=checkbox ${(D.slog[date]||[]).includes(s.n)?'checked':''} onchange="togS(${i})"> ${esc(s.n)} <span class=m>${esc(s.d)} ${s.t||''}</span></label><button class=x onclick="delS(${i})">✕</button></div>`}).join('')||'<p class=m>Sem suplementos.</p>')+`</div>`}
+const addS=()=>{const n=$('#sn').value.trim();n&&mut(()=>D.supps.push({n,d:$('#sd').value,t:$('#st').value}))};
+const delS=i=>mut(()=>D.supps.splice(i,1));
+const togS=i=>mut(()=>{const a=D.slog[date]||(D.slog[date]=[]),n=D.supps[i].n,k=a.indexOf(n);k<0?a.push(n):a.splice(k,1)});
+
+function chart(t,pts,bar){if(!pts.length)return`<div class=card><h3>${t}</h3><p class=m>Sem dados.</p></div>`;
+ const W=320,H=140,P=24,n=pts.length,mx=Math.max(...pts.map(p=>p[1]))||1,mn=bar?0:Math.min(...pts.map(p=>p[1])),rg=(mx-mn)||1;
+ const x=i=>P+(n>1?i*(W-2*P)/(n-1):(W-2*P)/2),y=v=>H-P-(v-mn)/rg*(H-2*P),bw=Math.min(24,(W-2*P)/n*.7);
+ const g=bar?pts.map((p,i)=>`<rect x="${x(i)-bw/2}" y="${y(p[1])}" width="${bw}" height="${H-P-y(p[1])}" fill="var(--ac)" rx=2 />`).join(''):`<polyline fill=none stroke="var(--ac)" stroke-width=2 points="${pts.map((p,i)=>x(i)+','+y(p[1])).join(' ')}"/>`+pts.map((p,i)=>`<circle cx="${x(i)}" cy="${y(p[1])}" r=3 fill="var(--ac)"/>`).join('');
+ return`<div class=card><h3>${t}</h3><svg viewBox="0 0 ${W} ${H}"><g font-size=9 fill="var(--mu)"><text x=2 y=${P-8}>${r1(mx)}</text><text x=2 y=${H-P}>${r1(mn)}</text><text x=${P} y=${H-6}>${pts[0][0]}</text><text x=${W-P} y=${H-6} text-anchor=end>${pts[n-1][0]}</text></g>${g}</svg></div>`}
+function tGraf(){const W={};D.sessions.forEach(s=>{const k=wk(s.d);const w=W[k]||(W[k]={v:0,l:0});w.v+=s.vol;w.l+=s.load});const ks=Object.keys(W).sort().slice(-10);
+ const cal=Object.keys(D.meals).sort().slice(-14).map(d=>[d.slice(5),Math.round(tot(Object.values(D.meals[d]).flat()).k)]).filter(p=>p[1]);
+ const rpe=[...D.sessions].slice(-12).map(s=>[s.d.slice(5),s.rpe]);
+ return chart('Peso corporal (kg)',D.weights.map(w=>[w.d.slice(2),w.kg]))+chart('Volume semanal (kg)',ks.map(k=>[k.slice(5),Math.round(W[k].v)]),1)+chart('Carga semanal (min × RPE)',ks.map(k=>[k.slice(5),Math.round(W[k].l)]),1)+chart('RPE por sessão',rpe)+chart('Calorias diárias',cal,1)}
+
+function tAdmin(){return`<div class=card><h3>Novo cliente</h3><div class=row><input id=nn class=w placeholder=Nome><input id=nu class=w placeholder=Username autocapitalize=none><input id=np class=w placeholder=Password></div><button style="margin-top:6px" onclick="addClient()">Criar conta</button></div>`+
+ clients.map(c=>{const i=info[c.id]||{};return`<div class=card><div class=row style="justify-content:space-between"><b>${esc(c.name)} <span class=m>@${esc(c.username)}</span></b><span class=m>${i.n} sessões · último peso ${i.w} kg · última sessão ${i.l}</span></div><div class=row style="margin:6px 0"><input id=pt_${c.id} class=w placeholder="PT" value="${esc(c.pt)}"><input id=gy_${c.id} class=w placeholder="Ginásio" value="${esc(c.gym)}"><button class=g onclick="saveAssoc('${c.id}')">Guardar</button></div><div class=row><button onclick="openC('${c.id}').then(render)">Ver / editar dados</button><button class=g onclick="resetPw('${c.id}')">Nova password</button><button class=x onclick="delClient('${c.id}')">Remover</button></div></div>`}).join('')||'<p class=m>Ainda sem clientes.</p>'}
+
+function render(){let h='';const E=err?`<p class=err>${esc(err)}</p>`:'';
+ if(view==='register'){h=`<div class=card style="margin-top:40px"><h1>Zone5<b>Training</b></h1><p class=m>Criar conta</p><div class=row><input id=rn class=w placeholder="Nome"><input id=ru class=w placeholder=Username autocapitalize=none><input id=rp type=password class=w placeholder="Password (mín. 8)"><input id=rq type=password class=w placeholder="Repetir password"><input id=rh style="display:none" tabindex=-1 autocomplete=off></div>${E}<div class=row style="margin-top:8px"><button onclick="reg()">Registar</button><button class=g onclick="view='login';err='';render()">Já tenho conta</button></div></div>`}else if(view==='setup'||view==='login'){const s=view==='setup';h=`<div class=card style="margin-top:40px"><h1>Zone5<b>Training</b></h1><p class=m>${s?'Primeiro acesso: cria a conta de administrador.':'Inicia sessão'}</p><div class=row><input id=${s?'su':'lu'} class=w placeholder=Username autocapitalize=none><input id=${s?'sp':'lp'} type=password class=w placeholder=Password onkeydown="event.key=='Enter'&&(${s?'setup':'login'})()"></div>${E}<button style="margin-top:8px" onclick="${s?'setup':'login'}()">${s?'Criar admin':'Entrar'}</button>${s?'':` <button class=g style="margin-top:8px" onclick="view='register';err='';render()">Criar conta</button>`}</div>`}
+ else{h=`<div class=row style="justify-content:space-between"><h1>Zone5<b>Training</b></h1><span class=m>${esc(me.name)} <button class=g onclick="logout()">Sair</button></span></div>${E}`;
+ if(view==='admin')h+='<h3 style="margin-top:12px">Clientes</h3>'+tAdmin();
+ else{const adm=me.role==='admin',c=clients.find(x=>x.id===cur);
+  if(adm)h+=`<div class=card><button class=g onclick="loadAdmin().then(()=>{view='admin';render()})">← Clientes</button> <b>${esc(c?.name||cur)}</b> <span class=m>PT: ${esc(c?.pt||'—')} · Ginásio: ${esc(c?.gym||'—')}</span></div>`;
+  else if(me.pt||me.gym)h+=`<p class=m>PT: ${esc(me.pt||'—')} · Ginásio: ${esc(me.gym||'—')}</p>`;
+  h+=`<div class=tabs>`+[['treino','Treino'],['ref','Refeições'],['hab','Hábitos'],['peso','Peso'],['sup','Suplementos'],['graf','Gráficos']].map(([k,t])=>`<button class="${tab===k?'on':''}" onclick="tab$('${k}')">${t}</button>`).join('')+`</div>`+({treino:tTreino,ref:tRef,hab:tHab,peso:tPeso,sup:tSup,graf:tGraf})[tab]()}}
+ const y=scrollY;app().innerHTML=h;scrollTo(0,y)}
+boot();
+</script></body></html>
